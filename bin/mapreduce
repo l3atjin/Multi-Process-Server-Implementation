@@ -20,6 +20,10 @@ fi
 # Parse argument.  $1 is the first argument
 case $1 in
   "start")
+    output=$(pgrep -f mapreduce-master)
+    if [-z $output]; then
+	exit 1
+    fi
     mapreduce-master 6000 &
     sleep 2
     mapreduce-worker 6000 6001 &
