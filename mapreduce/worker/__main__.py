@@ -13,19 +13,20 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 class Worker:
+    isRegistered = False
     def __init__(self, master_port, worker_port):
         logging.info("Starting worker:%s", worker_port)
         logging.info("Worker:%s PWD %s", worker_port, os.getcwd()) 
 
         # Get workers Process ID
         pid = os.getpid()
-
+        thread_hb = threading.Thread(target=self.send_hb, args=[master_port, worker_port])
         # Create TCP Socket on worker_port, call listen()
         thread = threading.Thread(target=self.listen, args=[master_port, worker_port])
         thread.start() # This gives up execution to the 'listen' thread
         # call functions
         thread.join() # Wait for listen thread to shut down
-        
+        thread_hb.join()
         # Send register to master 
         # When receive register_ack, create new thread
             # Sends heartbeat messages to master 
@@ -34,26 +35,46 @@ class Worker:
         # exit immediately!
         logging.debug("IMPLEMENT ME!")
 
+    # send context to port helper function
+    def send_message(self, port, context):
+        sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # make it a helper func
+        sendSock.connect(("localhost", port))
+        message = json.dumps(context)
+        sendSock.sendall(message.encode('utf-8'))
+        sendSock.close()
+
+    # send heartbeat
+    def send_hb(self,master_port, worker_port):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("localhost", worker_port))
+        sock.listen()
+
+        # Send hb Message to Master
+        context = {
+            "message_type": "heartbeat",
+            "worker_pid": int
+        }
+        while True:
+            send_message(master_port, context)
+            sleep(2)
+
+
     def listen(self,master_port, worker_port):
-        isRegistered = False
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("localhost", worker_port))
         sock.listen()
 
         # Send Register Message to Master
-        sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # make it a helper func
-        sendSock.connect(("localhost", master_port))
         context = {
             "message_type" : "register",
             "worker_host" : "localhost",
             "worker_port" : worker_port,
             "worker_pid" : os.getpid()
         }
-        message = json.dumps(context)
-        sendSock.sendall(message.encode('utf-8'))
-        sendSock.close()
+        self.send_message(master_port, context)
         print("just sent register")
         
         # receive register_ack, then create thread f or heartbeat sending
@@ -96,9 +117,9 @@ class Worker:
             # If Received Message
             if message_dict['message_type']:
                 # Check registration, check for register ack
-                if not isRegistered: 
+                if not self.isRegistered: 
                     if message_dict["message_type"] == "register_ack":
-                        isRegistered = True
+                        self.isRegistered = True
             
                 # If Shutdown Message
                 elif message_dict["message_type"] == "shutdown":
@@ -118,20 +139,8 @@ class Worker:
             else:
                 print("ERROR. INVALID REQUEST")
                 continue 
-            print(message_dict)
 
         print("listen() shutting down")
-
-        # Shutdown
-        # if message_dict["message_type"] == "shutdown":
-            #for worker in sorted(workers):
-            
-            #   kill worker
-            #kill self
-
-            # Send same shutdown message to workers
-                # Worker can complete task, then kill
-            # Kill self
 
 
 

@@ -31,17 +31,78 @@ class Master:
             # upadte the status
 
         # Create additional threads  (fault tolerance)
-
+        thread_hb = threading.Thread(target=self.listen_hb, args=[port])
+        thread_hb.start()
         # Create new socket on port number, call listen() 
         thread = threading.Thread(target=self.listen, args=[port])
         thread.start() # This gives up execution to the 'listen' thread
         thread.join() # Wait for listen thread to shut down
-
+        thread_hb.join()
         print("main() shutting down")
 
         # TODO: you should remove this. This is just so the program doesn't
         # exit immediately!
         logging.debug("IMPLEMENT ME!")
+
+    # helper func for sending messages
+    def send_message(self, port, context):
+        sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # make it a helper func
+        sendSock.connect(("localhost", port))
+        message = json.dumps(context)
+        sendSock.sendall(message.encode('utf-8'))
+        sendSock.close()
+
+    # listen for heartbeat
+    def listen_hb(self, port):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("localhost", port-1))
+        sock.listen()
+
+        # Wait for incoming messages
+            # Ignore invalid messages, try: block 
+        # Return once all threads are exited 
+
+        # Connect to a client
+        sock.settimeout(1)
+
+        while True:
+
+            # Listen for a connection for 1s.  The socket library avoids consuming
+            # CPU while waiting for a connection.
+            try:
+                clientsocket, address = sock.accept()
+            except socket.timeout:
+                continue
+            print("Connection from", address[0])
+            
+            # Create structure that has pid as key and pings since last heartbeat as value 
+            # Listen for heartbeat and populate a 
+            # Dictionary of hearbeat messages every 2 seconds
+            # For each worker's message, update value to 0, all others value++
+            # If value for any worker  > 5, mark dead and send shutdown message to it
+            # Figure out how the big while loop works. Does it get iterated constantly or 
+            # only when it receives a message?
+            # Built-in message queue? 
+            message_chunks = []
+            while True:
+                try:
+                    data = clientsocket.recv(4096)
+                except socket.timeout:
+                    continue
+                if not data:
+                    break
+                message_chunks.append(data)
+            # what does this line do?
+            clientsocket.close()
+
+            # Decode list-of-byte-strings to UTF8 and parse JSON data
+            message_bytes = b''.join(message_chunks)
+            message_str = message_bytes.decode("utf-8")
+            message_dict = json.loads(message_str)
+            print(message_dict)
+            
 
     def listen(self, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -101,8 +162,8 @@ class Master:
                     # Loop through Workers
                     for worker in self.worker_dict:
                         # Skip if dead
-                        """ if worker["status"] == "dead":
-                            continue """
+                        if self.worker_dict[worker]["status"] == "dead":
+                            continue
                         print("Worker:")
                         print(worker)
                         print(self.worker_dict[worker])
@@ -112,9 +173,6 @@ class Master:
                         message = json.dumps(context)
                         sendSock.sendall(message.encode('utf-8'))
                         sendSock.close()
-                        print("Sent: \n")
-                        print(message)
-                        print("To worker " + str(self.worker_dict[worker]["worker_port"]))
 
                     print("Shutting Down.")
                     clientsocket.close()
@@ -154,17 +212,6 @@ class Master:
                 continue
 
         print("listen() shutting down")
-
-        # Shutdown
-        # if message_dict["message_type"] == "shutdown":
-            #for worker in sorted(workers):
-            
-            #   kill worker
-            #kill self
-
-            # Send same shutdown message to workers
-                # Worker can complete task, then kill
-            # Kill self
 
 
 @click.command()
