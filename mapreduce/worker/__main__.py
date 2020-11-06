@@ -33,7 +33,6 @@ class Worker:
         # TODO: you should remove this. This is just so the program doesn't
         # exit immediately!
         logging.debug("IMPLEMENT ME!")
-        time.sleep(120)
 
     def listen(self,master_port, worker_port):
         isRegistered = False
@@ -44,7 +43,7 @@ class Worker:
 
         # Send Register Message to Master
         sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
+        # make it a helper func
         sendSock.connect(("localhost", master_port))
         context = {
             "message_type" : "register",
@@ -54,6 +53,7 @@ class Worker:
         }
         message = json.dumps(context)
         sendSock.sendall(message.encode('utf-8'))
+        sendSock.close()
         print("just sent register")
         
         # receive register_ack, then create thread f or heartbeat sending

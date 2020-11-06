@@ -39,11 +39,9 @@ class Master:
 
         print("main() shutting down")
 
-
         # TODO: you should remove this. This is just so the program doesn't
         # exit immediately!
         logging.debug("IMPLEMENT ME!")
-        time.sleep(120)
 
     def listen(self, port):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -82,17 +80,17 @@ class Master:
                 if not data:
                     break
                 message_chunks.append(data)
+            # what does this line do?
             clientsocket.close()
 
             # Decode list-of-byte-strings to UTF8 and parse JSON data
             message_bytes = b''.join(message_chunks)
             message_str = message_bytes.decode("utf-8")
             message_dict = json.loads(message_str)
-            print(message_dict)
+            # print(message_dict)
             
             # If Received Message
             if message_dict['message_type']:
-                print("received message_type")
                 # If Shutdown Message
                 if message_dict["message_type"] == "shutdown":
                     # shutdown()
@@ -103,18 +101,21 @@ class Master:
                     # Loop through Workers
                     for worker in self.worker_dict:
                         # Skip if dead
-                        if worker["status"] == "dead":
-                            continue
-
+                        """ if worker["status"] == "dead":
+                            continue """
+                        print("Worker:")
+                        print(worker)
+                        print(self.worker_dict[worker])
                         # Else Send Shutdown Message
                         sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        sendSock.connect(("localhost", worker_port))
+                        sendSock.connect(("localhost", self.worker_dict[worker]["worker_port"]))
                         message = json.dumps(context)
                         sendSock.sendall(message.encode('utf-8'))
+                        sendSock.close()
                         print("Sent: \n")
                         print(message)
-                        print("To worker " + worker["worker_port"])
-                        
+                        print("To worker " + str(self.worker_dict[worker]["worker_port"]))
+
                     print("Shutting Down.")
                     clientsocket.close()
                     return
@@ -124,31 +125,33 @@ class Master:
                     continue
 
                 elif message_dict["message_type"] == "register":
-                    print("Received: \n")
-                    print(json.dumps(message_dict))
+                    print("Received:")
+                    print(message_dict)
                     worker_port =  message_dict["worker_port"]
                     worker_pid =  message_dict["worker_pid"]
                     context = {
                         "message_type": "register_ack",
-                        "worker_host": 'locahost',
+                        "worker_host": 'localhost',
                         "worker_port": worker_port,
                         "worker_pid" : worker_pid
                     }
                     # Send to worker
-                    """  sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                     sendSock.connect(("localhost", worker_port))
                     message = json.dumps(context)
-                    sendSock.sendall(message.encode('utf-8')) """
-                    """ print("Sent: \n")
-                    print(message) """
+                    sendSock.sendall(message.encode('utf-8'))
+                    sendSock.close()
+                    print("Sent:")
+                    print(message)
                     # Add worker to container
                     self.worker_dict[worker_pid] = {"worker_port": worker_port, "status": "ready"}
+                    print("Worker dict: ")
+                    print(self.worker_dict)
                     continue
-                
+
             else:
                 print("ERROR. INVALID REQUEST")
-                continue 
-            print(message_dict)
+                continue
 
         print("listen() shutting down")
 
