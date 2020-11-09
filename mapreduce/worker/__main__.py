@@ -20,17 +20,15 @@ class Worker:
 
         # Get workers Process ID
         pid = os.getpid()
-        thread_hb = threading.Thread(target=self.send_hb, args=[master_port, worker_port])
         # Create TCP Socket on worker_port, call listen()
         thread = threading.Thread(target=self.listen, args=[master_port, worker_port])
         thread.start() # This gives up execution to the 'listen' thread
         # call functions
         thread.join() # Wait for listen thread to shut down
-        thread_hb.join()
-        # Send register to master 
+        # thread_hb.join()
+        # Send register to master
         # When receive register_ack, create new thread
-            # Sends heartbeat messages to master 
-
+            # Sends heartbeat messages to master
         # TODO: you should remove this. This is just so the program doesn't
         # exit immediately!
         logging.debug("IMPLEMENT ME!")
@@ -46,19 +44,20 @@ class Worker:
 
     # send heartbeat
     def send_hb(self,master_port, worker_port):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("localhost", worker_port))
-        sock.listen()
-
         # Send hb Message to Master
         context = {
             "message_type": "heartbeat",
-            "worker_pid": int
+            "worker_pid": os.getpid()
         }
-        while True:
-            send_message(master_port, context)
-            sleep(2)
+        while True:  
+            message = json.dumps(context)
+            # Here it is
+            UDP_IP = "127.0.0.1"
+            udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
+            udp_sock.connect((UDP_IP, master_port-1))
+            udp_sock.sendall(message.encode('utf-8'))
+            udp_sock.close()
+            time.sleep(2)
 
 
     def listen(self,master_port, worker_port):
@@ -66,6 +65,7 @@ class Worker:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("localhost", worker_port))
         sock.listen()
+        thread_hb = threading.Thread(target=self.send_hb, args=[master_port, worker_port])
 
         # Send Register Message to Master
         context = {
@@ -120,6 +120,7 @@ class Worker:
                 if not self.isRegistered: 
                     if message_dict["message_type"] == "register_ack":
                         self.isRegistered = True
+                        thread_hb.start()
             
                 # If Shutdown Message
                 elif message_dict["message_type"] == "shutdown":
@@ -127,13 +128,11 @@ class Worker:
                     # kill self
                     print("Shutting Down.")
                     clientsocket.close()
+                    thread_hb.close()
                     return
 
                 elif message_dict["message_type"] == "new_worker_job":
                     # Master  Job Shit
-                    continue
-                
-
                     continue
                 
             else:

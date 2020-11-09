@@ -7,6 +7,7 @@ import click
 import socket
 import mapreduce.utils
 import pathlib
+import datetime
 
 
 # Configure logging
@@ -19,9 +20,9 @@ class Master:
     def __init__(self, port):
         # Create tmp folder
         # use pathlib with Parents = True and Exist_ok = True
-        """ cwd = os.getcwd()
-        dir = cwd/'tmp'
-        dir.mkdir(parents=True, exist_ok=True) """
+        cwd = os.getcwd() + "/tmp"
+        dir = pathlib.Path(cwd)
+        dir.mkdir(parents=True, exist_ok=True)
         
         # Create new thread - listens for heartbeats on port-1
         # Have a dictionary of workers each having a status
@@ -53,29 +54,32 @@ class Master:
         sendSock.sendall(message.encode('utf-8'))
         sendSock.close()
 
+    # updates the worker status based on their last received ping
+    def check_pulse(self):
+        for worker in self.worker_dict:
+            if self.worker_dict[worker]["status"] != "dead":
+                diff = datetime.datetime.now() - self.worker_dict[worker]["last_ping"]
+                if diff.total_seconds() > 10:
+                    self.worker_dict[worker]["status"] = "dead"
+
+
     # listen for heartbeat
     def listen_hb(self, port):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("localhost", port-1))
-        sock.listen()
-
-        # Wait for incoming messages
-            # Ignore invalid messages, try: block 
-        # Return once all threads are exited 
+        UDP_IP = "127.0.0.1"
+        UDP_PORT = port-1
+        sock = socket.socket(socket.AF_INET, # Internet
+                      socket.SOCK_DGRAM) # UDP
+        sock.bind((UDP_IP, UDP_PORT))
 
         # Connect to a client
         sock.settimeout(1)
 
         while True:
 
+            # this could be a different thread
+            self.check_pulse()
             # Listen for a connection for 1s.  The socket library avoids consuming
             # CPU while waiting for a connection.
-            try:
-                clientsocket, address = sock.accept()
-            except socket.timeout:
-                continue
-            print("Connection from", address[0])
             
             # Create structure that has pid as key and pings since last heartbeat as value 
             # Listen for heartbeat and populate a 
@@ -84,23 +88,28 @@ class Master:
             # If value for any worker  > 5, mark dead and send shutdown message to it
             # Figure out how the big while loop works. Does it get iterated constantly or 
             # only when it receives a message?
-            # Built-in message queue? 
+            # Built-in message queue?
             message_chunks = []
             while True:
                 try:
-                    data = clientsocket.recv(4096)
+                    data = sock.recv(4096)
                 except socket.timeout:
                     continue
                 if not data:
                     break
                 message_chunks.append(data)
-            # what does this line do?
-            clientsocket.close()
 
             # Decode list-of-byte-strings to UTF8 and parse JSON data
             message_bytes = b''.join(message_chunks)
             message_str = message_bytes.decode("utf-8")
             message_dict = json.loads(message_str)
+
+            # Check to make sure it is a heartbeat
+            if(message_dict["message_type"] != "heartbeat"):
+                continue
+            else:
+                # update the corresponding worker's last received ping
+                self.worker_dict[message_dict["worker_pid"]]["last_ping"] = datetime.datetime.now()
             print(message_dict)
             
 
@@ -175,6 +184,7 @@ class Master:
                         sendSock.close()
 
                     print("Shutting Down.")
+                    sock.close()
                     clientsocket.close()
                     return
 
@@ -201,8 +211,9 @@ class Master:
                     sendSock.close()
                     print("Sent:")
                     print(message)
+                    
                     # Add worker to container
-                    self.worker_dict[worker_pid] = {"worker_port": worker_port, "status": "ready"}
+                    self.worker_dict[worker_pid] = {"worker_port": worker_port, "status": "ready", "last_ping": datetime.datetime.now()}
                     print("Worker dict: ")
                     print(self.worker_dict)
                     continue
@@ -224,3 +235,4 @@ def main(port):
 
 if __name__ == '__main__':
     main()
+
