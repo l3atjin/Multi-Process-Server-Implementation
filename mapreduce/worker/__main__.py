@@ -13,6 +13,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 class Worker:
+    isShutdown = False
     isRegistered = False
     def __init__(self, master_port, worker_port):
         logging.info("Starting worker:%s", worker_port)
@@ -49,10 +50,12 @@ class Worker:
             "message_type": "heartbeat",
             "worker_pid": os.getpid()
         }
-        while True:  
+        while True:
+            if self.isShutdown:
+                return
             message = json.dumps(context)
             # Here it is
-            UDP_IP = "127.0.0.1"
+            UDP_IP = "localhost"
             udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # UDP
             udp_sock.connect((UDP_IP, master_port-1))
             udp_sock.sendall(message.encode('utf-8'))
@@ -124,11 +127,10 @@ class Worker:
             
                 # If Shutdown Message
                 elif message_dict["message_type"] == "shutdown":
-                    # shutdown()
-                    # kill self
+                    self.isShutdown = True
                     print("Shutting Down.")
                     clientsocket.close()
-                    thread_hb.close()
+                    thread_hb.join()
                     return
 
                 elif message_dict["message_type"] == "new_worker_job":
@@ -141,7 +143,9 @@ class Worker:
 
         print("listen() shutting down")
 
-
+# subprocess.run for workers to run code on code 
+    # FLAGS: stdin/stdout, input redirection techniques
+    
 
 @click.command()
 @click.argument("master_port", nargs=1, type=int)
