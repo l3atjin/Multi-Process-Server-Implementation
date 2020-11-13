@@ -9,6 +9,7 @@ import json
 import time
 import click
 import mapreduce.utils
+import heapq
 
 
 # Configure logging
@@ -152,7 +153,33 @@ class Worker:
                     }
                     self.send_message(master_port, context)
                     continue
-                
+
+                # If Sorting/Grouping Message
+                elif message_dict["message_type"] == "new_sort_job":
+                    # Grab data from job message
+                    input_files = message_dict["input_files"]
+                    output_file = message_dict["output_file"]
+                    
+                    # Sort each Input File line by line
+                    for infile in input_files:
+                        lines=file(infile).readlines()
+                        lines.sort()
+                        # write sorted lines into the file
+                    
+                    # Combine Sorted Files into one Output File
+                    for infile in input_files:
+                        print("merging")
+                        # do some (heapq?) merge to make output_file
+
+                    # Send message to Master once completed.
+                    context = {
+                                "message_type": "status",
+                                "output_file" : output_file,
+                                "status": "finished",
+                                "worker_pid": os.getpid()
+                            }
+                    self.send_message(master_port,context)
+                    continue
             else:
                 print("ERROR. INVALID REQUEST")
                 continue 

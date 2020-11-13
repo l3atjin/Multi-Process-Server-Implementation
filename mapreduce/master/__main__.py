@@ -3,11 +3,11 @@ import logging
 import json
 import threading
 import time
-import click
 import socket
 import mapreduce.utils
 import pathlib
 import datetime
+import click
 
 
 # Configure logging
@@ -232,10 +232,10 @@ class Master:
                     # Check if workers are ready to work (get num available workers)
                     available_workers = 0
                     busy_workers = 0
-                    for worker in worker_dict:
-                        if worker_dict[worker]["status"] == "ready":
+                    for worker in self.worker_dict:
+                        if self.worker_dict[worker]["status"] == "ready":
                             available_workers += 1
-                        elif worker_dict[worker]["status"] == "busy":
+                        elif self.worker_dict[worker]["status"] == "busy":
                             busy_workers += 1
                             continue
 
@@ -251,7 +251,7 @@ class Master:
                         # integration test
                         # use subprocess to run code from another code
                     if busy_workers > 0 or available_workers == 0:
-                        self.job_queue.push(message_dict)
+                        self.job_queue.append(message_dict)
                         continue
                     else:
                         self.do_job(message_dict)
@@ -303,8 +303,7 @@ class Master:
 
         print("listen() shutting down")
 
-    def do_job(self, input_directory, output_directory, mapper_executable,
-                reducer_executable, num_mappers, num_reducers):
+    def do_job(self, message_dict):
         """Execute the different phases of a MapReduce Job."""
         
         input_directory =  message_dict["input_directory"]
@@ -313,20 +312,20 @@ class Master:
         num_mappers =  message_dict["num_mappers"]
         num_reducers =  message_dict["num_reducers"]
 
-
         ### Mapper Phase ###
 
         # Get files from input_dir, sort alphabetically
         map_output_path = os.getcwd() + "/tmp/job-{numJobs}/mapper-output/"
-        inPath = os.getcwd() + "/tmp/job-{numJobs}/input_directory/"
+        inPath = os.getcwd() + "/tmp/job-{numJobs}/{input_directory}/"
         infile_list = os.listdir(inPath)
-        sort(infile_list)
+        infile_list.sort()
 
         # Make empty list of lists
         count = 0
         mapper_tasks = []
         for i in range(num_mappers):
             mapper_tasks.append([])
+            i += 1
 
         # Round Robin fill list
         while count < len(infile_list):
@@ -357,19 +356,82 @@ class Master:
                         }
                         self.worker_dict[worker]["status"] = "busy"
                         # Open Socket and Send
-                        send_message(self.worker_dict[worker]["worker_port"], context)
+                        self.send_message(self.worker_dict[worker]["worker_port"], context)
                         assigned = True 
                         break # from this task assignment, onto next
             # End While
-        # End For
-        
+        # End Mapper Phase
 
+        ### Grouper  Phase ###
+            # 1. Workers sort each mapper output
+            # 2. Master rearranges sorted mapper output, grouping like keys together
+
+            # Grab files from mapper output directory 
+            indir = os.getcwd() + "/tmp/job-{numJobs}/"  
+            indirPath = pathlib.Path(indir + "mapper-output/")
+            files = os.listdir(indirPath)
+            files.sort()
+
+            # Assign new_sort_jobs to be min(living workers, mapper output files)
+            num_living_workers = 0
+            for worker  in  self.worker_dict:
+                if not self.worker_dict[worker]["status"] == "dead":
+                    num_living_workers += 1  
+            new_sort_jobs = min(num_living_workers,len(files))
+
+            # Make Empty List of lists for grouper assignment
+            grouper_tasks = []
+            for i in range(new_sort_jobs):
+                mapper_tasks.append([])
+                i += 1
+
+            # Round Robin grouper files into new_sort_jobs groups
+            count = 0
+            while count < len(files):
+                for grouper in grouper_tasks:
+                    grouper.append(files[count])
+                    count += 1
+                    if count == len(files):
+                        break
+
+            # Assign each grouping task to a worker until they are  all done
+            for tasks in grouper_tasks:
+                assigned = False
+                # Try each worker untill assigned
+                while not assigned:
+                    for worker in self.worker_dict:
+                        # Send message if worker is ready 
+                        if self.worker_dict[worker]["status"] == "ready":
+                            # Create Message
+                            context = {
+                                "message_type": "new_sort_job",
+                                "input_files": tasks,
+                                "output_file": "sorted{count}",
+                                "worker_pid": self.worker_dict[worker]["worker_pid"]
+                            }
+                            self.worker_dict[worker]["status"] = "busy"
+                            # Open Socket and Send
+                            self.send_message(self.worker_dict[worker]["worker_port"], context)
+                            assigned = True 
+                            break # from this task assignment, onto next
+                # End While
+             # All workers sorting finished.
+
+            # ANOTHER round robin with num_reducers key groups
+            # The question: What the fuck are the keys? is it just 1 through num_reducers?
+            # Use heapq.merge() to merge files - do NOT create one big one
+            # name reduce01, reduce02, etc... 
+            # outdir = pathlib.Path(indir + "/grouper-output/")
+            print("finished grouping")
+
+
+        ### Reducer Phase ###
 
         # Get files from grouper_dir, sort alphabetically
         reducer_output_path = os.getcwd() + "/tmp/job-{numJobs}/reducer-output/"
         inPath = os.getcwd() + "/tmp/job-{numJobs}/grouper-output/"
         infile_list = os.listdir(inPath)
-        sort(infile_list)
+        infile_list.sort()
 
         # Make empty list of lists
         count = 0
@@ -406,15 +468,14 @@ class Master:
                         }
                         self.worker_dict[worker]["status"] = "busy"
                         # Open Socket and Send
-                        send_message(self.worker_dict[worker]["worker_port"], context)
+                        self.send_message(self.worker_dict[worker]["worker_port"], context)
                         assigned = True 
                         break # from this task assignment, onto next
             # End While
         # End For
-        # endReducer
 
         # Increment numJobs when finished 
-        numJobs += 1
+        self.numJobs += 1
 
 
 @click.command()
