@@ -19,6 +19,7 @@ class Master:
     job_queue = []
     worker_dict = dict()
     thread_pulse = threading.Thread()
+    thread_hb = threading.Thread()
     isShutdown = False
 
     # Initialization / Constructor
@@ -26,15 +27,16 @@ class Master:
         """ Initialize the Master Object."""
         # Initialize Member Vars
         self.thread_pulse  = threading.Thread(target=self.check_pulse, args=[])
-
+        
         # Create tmp folder for output
         cwd = os.getcwd() + "/tmp"
         dir = pathlib.Path(cwd)
         dir.mkdir(parents=True, exist_ok=True)
 
         # Creat Heartbeat Thread
-        thread_hb = threading.Thread(target=self.listen_hb, args=[port])
-        thread_hb.start()
+        self.thread_hb = threading.Thread(target=self.listen_hb, args=[port])
+        self.thread_pulse.start()
+        self.thread_hb.start()
 
         # Create additional threads  (fault tolerance)
             # TODO still 
@@ -43,7 +45,10 @@ class Master:
         thread = threading.Thread(target=self.listen, args=[port])
         thread.start() # This gives up execution to the 'listen' thread
         thread.join() # Wait for listen thread to shut down
-        thread_hb.join()
+        print("After listen join")
+        self.thread_hb.join()
+        print("in between two joins")
+        self.thread_pulse.join()
         print("ACTUALLY ENDED")
 
 
@@ -60,6 +65,7 @@ class Master:
         """Updates workers' statuses by last recieved heartbeat."""
         while True:
             if self.isShutdown:
+                print("check_pulse shuts down")
                 return
             for worker in self.worker_dict:
                 if self.worker_dict[worker]["status"] != "dead":
@@ -70,16 +76,24 @@ class Master:
 
     # Big Functions
     def listen_hb(self, port):
-        UDP_IP = "127.0.0.1"
+        UDP_IP = "localhost"
         UDP_PORT = port-1
         sock = socket.socket(socket.AF_INET, # Internet
                       socket.SOCK_DGRAM) # UDP
         sock.bind((UDP_IP, UDP_PORT))
         sock.settimeout(1)
-        self.thread_pulse.start()
+        
+        if self.isShutdown:
+            sock.close()
+            logging.info("listen_hb shuts down")
+            return
 
         while True:
+            print(self.isShutdown)
+
             if self.isShutdown:
+                sock.close()
+                logging.info("listen_hb shuts down")
                 return
             # this could be a different thread
             
@@ -94,12 +108,15 @@ class Master:
             # only when it receives a message?
             # Built-in message queue?\
             # https://piazza.com/class/k9vihaw2wd07b0?cid=2635
+            data = str()
             while True:
                 try:
                     data = sock.recv(4096)
-                    break
                 except socket.timeout:
-                    continue
+                    break
+                if(len(data) < 4096):
+                    break
+
             # Decode list-of-byte-strings to UTF8 and parse JSON data
             message_str = data.decode("utf-8")
             message_dict = json.loads(message_str)
@@ -110,8 +127,16 @@ class Master:
             else:   
                 # update the corresponding worker's last received ping
                 self.worker_dict[message_dict["worker_pid"]]["last_ping"] = datetime.datetime.now()
-            
 
+        if self.isShutdown:
+            sock.close()
+            logging.info("listen_hb shuts down")
+            return
+
+        sock.close()
+        logging.info("end of listen hb")
+        return
+            
     def listen(self, port):
         """Listen for incoming messages."""
 
@@ -153,6 +178,9 @@ class Master:
                 
                 # Shutdown Message Received
                 if message_dict["message_type"] == "shutdown":
+                    self.isShutdown = True
+                    if self.isShutdown:
+                        print("Shutdown should be true")
                     context = {
                         "message_type": "shutdown"
                     }
@@ -172,11 +200,9 @@ class Master:
                         sendSock.close()
 
                     print("Shutting Down.")
-                    self.isShutdown = True
                     sock.close()
                     clientsocket.close()
                     print("closed socket")
-                    self.thread_pulse.join()
                     print("joined thread")
                     return
                 
@@ -187,7 +213,7 @@ class Master:
                     print(message_dict)
 
                     # Grab values from job message 
-                    
+
                     # Create new set of direcories for temp job files
                     cwd = os.getcwd() + "/tmp/job-{numJobs}/"
                     
@@ -203,7 +229,6 @@ class Master:
                     dir = pathlib.Path(cwd + "reducer-output/")
                     dir.mkdir(parents=True, exist_ok=True)
 
-                    numJobs += 1
                     # Check if workers are ready to work (get num available workers)
                     available_workers = 0
                     busy_workers = 0
@@ -213,6 +238,7 @@ class Master:
                         elif worker_dict[worker]["status"] == "busy":
                             busy_workers += 1
                             continue
+
                     # ---------------- TODO: ----------------------------
                     # Check if MapReduce server is currently working on job
 
@@ -223,12 +249,10 @@ class Master:
                         # do shutdown actually shutdown the mapreduce server
                         # mapreduce script
                         # integration test
-
                         # use subprocess to run code from another code
                     if busy_workers > 0 or available_workers == 0:
                         self.job_queue.push(message_dict)
                         continue
-
                     else:
                         self.do_job(message_dict)
                     # ---------------------------------------------------
@@ -262,6 +286,17 @@ class Master:
                     print(self.worker_dict)
                     continue
 
+                # Status Message Received
+                elif message_dict["message_type"] == "status":
+                    print("Received:")
+                    print(message_dict)
+                    worker_pid =  message_dict["worker_pid"]
+                    # TODO: Find out what else to do when update status
+                    # Update status
+                    if message_dict["status"] == "finished":
+                        self.worker_dict[worker_pid]["status"] = "ready"
+                    continue
+
             else:
                 print("ERROR. INVALID REQUEST")
                 continue
@@ -273,33 +308,114 @@ class Master:
         """Execute the different phases of a MapReduce Job."""
         
         input_directory =  message_dict["input_directory"]
-        output_directory =  message_dict["output_directory"]
         mapper_executable =  message_dict["mapper_executable"]
         reducer_executable =  message_dict["reducer_executable"]
         num_mappers =  message_dict["num_mappers"]
         num_reducers =  message_dict["num_reducers"]
 
-        # ---------- TODO: Input partioning ------------
-        # Get files from input_dir,
-        # Sort files alphabetically and allocate into num_mappers groups
-        # "Round robin". 
-        # # num_mappers is how many groups  of files
-        # ----------------------------------------------
 
-        # For each worker (IN REGISTRATION ORDER -- list should do this)
-        list(self.worker_dict)
-        for worker in self.worker_dict:
-            # Create message with relevant info
-            context = {
-            sendSock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sendSock.connect(("localhost", self.worker_dict[worker]["worker_port"]))
-            message = json.dumps(context)
+        ### Mapper Phase ###
 
-            # Send job message to worker 
-            sendSock.sendall(message.encode('utf-8'))
-            sendSock.close()
-            print("Sent:")
-            print(message)
+        # Get files from input_dir, sort alphabetically
+        map_output_path = os.getcwd() + "/tmp/job-{numJobs}/mapper-output/"
+        inPath = os.getcwd() + "/tmp/job-{numJobs}/input_directory/"
+        infile_list = os.listdir(inPath)
+        sort(infile_list)
+
+        # Make empty list of lists
+        count = 0
+        mapper_tasks = []
+        for i in range(num_mappers):
+            mapper_tasks.append([])
+
+        # Round Robin fill list
+        while count < len(infile_list):
+            for mapper in mapper_tasks:
+                mapper.append(infile_list[count])
+                count += 1
+                if count == num_mappers:
+                    break
+        print(str(mapper_tasks))
+
+        # Assign each list of tasks to a worker
+        list(self.worker_dict) # Sorts workers by registration order
+        assigned = False
+        for tasks in mapper_tasks:
+            assigned = False
+            # Try each worker (IN REGISTRATION ORDER) untill assigned
+            while not assigned:
+                for worker in self.worker_dict:
+                    # Send message if worker is ready 
+                    if self.worker_dict[worker]["status"] == "ready":
+                        # Create Message
+                        context = {
+                            "message_type": "new_worker_job",
+                            "input_files": tasks,
+                            "executable": mapper_executable,
+                            "output_directory": map_output_path,
+                            "worker_pid" : self.worker_dict[worker]["pid"]
+                        }
+                        self.worker_dict[worker]["status"] = "busy"
+                        # Open Socket and Send
+                        send_message(self.worker_dict[worker]["worker_port"], context)
+                        assigned = True 
+                        break # from this task assignment, onto next
+            # End While
+        # End For
+        
+
+
+        # Get files from grouper_dir, sort alphabetically
+        reducer_output_path = os.getcwd() + "/tmp/job-{numJobs}/reducer-output/"
+        inPath = os.getcwd() + "/tmp/job-{numJobs}/grouper-output/"
+        infile_list = os.listdir(inPath)
+        sort(infile_list)
+
+        # Make empty list of lists
+        count = 0
+        reducer_tasks = []
+        for i in range(num_reducers):
+            reducer_tasks.append([])
+
+        # Round Robin fill list
+        while count < len(infile_list):
+            for reducer in reducer_tasks:
+                reducer.append(infile_list[count])
+                count += 1
+                if count == num_reducers:
+                    break
+        print(str(reducer_tasks))
+
+        # Assign each list of tasks to a worker
+        list(self.worker_dict) # Sorts workers by registration order
+        assigned = False
+        for tasks in reducer_tasks:
+            assigned = False
+            # Try each worker (IN REGISTRATION ORDER) untill assigned
+            while not assigned:
+                for worker in self.worker_dict:
+                    # Send message if worker is ready
+                    if self.worker_dict[worker]["status"] == "ready":
+                        # Create Message
+                        context = {
+                            "message_type": "new_worker_job",
+                            "input_files": tasks,
+                            "executable": reducer_executable,
+                            "output_directory": reducer_output_path,
+                            "worker_pid" : self.worker_dict[worker]["pid"]
+                        }
+                        self.worker_dict[worker]["status"] = "busy"
+                        # Open Socket and Send
+                        send_message(self.worker_dict[worker]["worker_port"], context)
+                        assigned = True 
+                        break # from this task assignment, onto next
+            # End While
+        # End For
+        # endReducer
+
+        # Increment numJobs when finished 
+        numJobs += 1
+
 
 @click.command()
 @click.argument("port", nargs=1, type=int)
@@ -307,7 +423,6 @@ def main(port):
     Master(port)
     # Learn to kill yourself and the workers
     # possibly the answer is process.terminate
-
 
 if __name__ == '__main__':
     main()

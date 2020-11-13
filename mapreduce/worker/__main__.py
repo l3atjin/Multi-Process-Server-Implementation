@@ -1,4 +1,7 @@
 import os
+import sys
+import pathlib
+import subprocess
 import logging
 import threading
 import socket
@@ -32,7 +35,6 @@ class Worker:
             # Sends heartbeat messages to master
         # TODO: you should remove this. This is just so the program doesn't
         # exit immediately!
-        logging.debug("IMPLEMENT ME!")
 
     # send context to port helper function
     def send_message(self, port, context):
@@ -128,13 +130,27 @@ class Worker:
                 # If Shutdown Message
                 elif message_dict["message_type"] == "shutdown":
                     self.isShutdown = True
-                    print("Shutting Down.")
+                    print("Worker shutting Down.")
                     clientsocket.close()
                     thread_hb.join()
                     return
 
                 elif message_dict["message_type"] == "new_worker_job":
                     # Master  Job Shit
+                    input_files =  message_dict["input_files"]
+                    output_dir =  pathlib.Path(message_dict["output_directory"])
+                    executable =  pathlib.Path(message_dict["executable"])
+                    for name in input_files:
+                        with open(output_dir/name, 'w') as f:
+                            p = subprocess.run(executable, stdout=f, stdin=name)
+                    
+                    context = {
+                        "message_type": "status",
+                        "output_files" : input_files,
+                        "status": "finished",
+                        "worker_pid": os.getpid()
+                    }
+                    self.send_message(master_port, context)
                     continue
                 
             else:
@@ -143,16 +159,11 @@ class Worker:
 
         print("listen() shutting down")
 
-# subprocess.run for workers to run code on code 
-    # FLAGS: stdin/stdout, input redirection techniques
-    
-
 @click.command()
 @click.argument("master_port", nargs=1, type=int)
 @click.argument("worker_port", nargs=1, type=int)
 def main(master_port, worker_port):
     Worker(master_port, worker_port)
-
 
 if __name__ == '__main__':
     main()
